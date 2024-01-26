@@ -156,6 +156,10 @@
   <ItemGroup>
     <None Include="dxgi_sample.py" />
   </ItemGroup>
+  <ItemGroup>
+    <Image Include="C:\Users\w5921\OneDrive\桌面\results.png" />
+    <Image Include="C:\Users\w5921\OneDrive\桌面\test.png" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

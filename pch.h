@@ -14,5 +14,4 @@ extern "C" _declspec(dllexport) void init_dxgi(HWND hwnd);
 extern "C" _declspec(dllexport) BYTE * grab(BYTE * buffer, int left, int top, int right, int bottom);
 extern "C" _declspec(dllexport) void destroy();
 
-
 #endif //PCH_H
