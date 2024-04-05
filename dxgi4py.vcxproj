@@ -154,6 +154,7 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <None Include="D:\dxgi4py.dll" />
     <None Include="dxgi_sample.py" />
   </ItemGroup>
   <ItemGroup>

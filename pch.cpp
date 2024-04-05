@@ -49,8 +49,8 @@ SimpleDXGI::~SimpleDXGI()
 void SimpleDXGI::InitSession()
 {
 	// Init COM
-	winrt::init_apartment(winrt::apartment_type::multi_threaded);
-	SetProcessDPIAware();
+	winrt::init_apartment(winrt::apartment_type::single_threaded);
+	//SetProcessDPIAware();
 
 
 	winrt::check_hresult(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -77,10 +77,10 @@ void SimpleDXGI::InitSession()
 	const auto size = winrt::Windows::Graphics::SizeInt32{ rect.right - rect.left, rect.bottom - rect.top };
 
 	winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool m_framePool =
-		winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool::Create(
+		winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool::CreateFreeThreaded(
 			device,
 			winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
-			2,
+			1,
 			size);
 
 	const auto activationFactory = winrt::get_activation_factory<winrt::Windows::Graphics::Capture::GraphicsCaptureItem>();
@@ -91,18 +91,19 @@ void SimpleDXGI::InitSession()
 		reinterpret_cast<void**>(winrt::put_abi(captureItem)));
 
 	session = m_framePool.CreateCaptureSession(captureItem);
-	m_framePool.FrameArrived([&](auto& framePool, auto&)
+	m_framePool.FrameArrived([&](winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool framePool, auto&)
 		{
-			if (isFrameArrived) return;
-			auto frame = framePool.TryGetNextFrame();
+			//if (isFrameArrived) return;
+			
+			winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame frame = framePool.TryGetNextFrame();
 
 			struct __declspec(uuid("A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1"))
 				IDirect3DDxgiInterfaceAccess : ::IUnknown
 			{
 				virtual HRESULT __stdcall GetInterface(GUID const& id, void** object) = 0;
 			};
-
 			auto access = frame.Surface().as<IDirect3DDxgiInterfaceAccess>();
+			texture = nullptr;
 			access->GetInterface(winrt::guid_of<ID3D11Texture2D>(), texture.put_void());
 			isFrameArrived = true;
 			return;
@@ -126,20 +127,14 @@ BYTE* SimpleDXGI::CaptureWindow(BYTE* buffer, int left, int top, int right, int 
 {
 	// Message pump
 	MSG msg;
-	clock_t timer = clock();
 	while (!isFrameArrived)
 	{
 		if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) > 0) {
 			DispatchMessage(&msg);
 		}
-
-		if (clock() - timer > 20000)
-		{
-			// TODO: try to make here a better error handling
-			return nullptr;
-		}
+		Sleep(1);
 	}
-	isFrameArrived = false;
+	//isFrameArrived = false;
 	auto pData = grabByRegion(buffer, left, top, right, bottom);
 	return pData;
 }
@@ -179,18 +174,18 @@ BYTE* SimpleDXGI::grabByRegion(BYTE* buffer, int left, int top, int right, int b
 	D3D11_MAPPED_SUBRESOURCE resource;
 	winrt::check_hresult(d3dContext->Map(userTexture.get(), NULL, D3D11_MAP_READ, 0, &resource));
 
-	D3D11_QUERY_DESC queryDesc;
-	queryDesc.Query = D3D11_QUERY_EVENT;
-	queryDesc.MiscFlags = NULL;
-	ID3D11Query* pQuery;
-	winrt::check_hresult(d3dDevice->CreateQuery(&queryDesc, &pQuery));
-	d3dContext->Flush();
-	d3dContext->End(pQuery);
-	BOOL queryData;
-	while (S_OK != winrt::check_hresult(d3dContext->GetData(pQuery, &queryData, sizeof(BOOL), 0)))
-	{
+	//D3D11_QUERY_DESC queryDesc;
+	//queryDesc.Query = D3D11_QUERY_EVENT;
+	//queryDesc.MiscFlags = NULL;
+	//ID3D11Query* pQuery;
+	//winrt::check_hresult(d3dDevice->CreateQuery(&queryDesc, &pQuery));
+	//d3dContext->Flush();
+	//d3dContext->End(pQuery);
+	//BOOL queryData;
+	//while (S_OK != winrt::check_hresult(d3dContext->GetData(pQuery, &queryData, sizeof(BOOL), 0)))
+	//{
 
-	}
+	//}
 
 	UINT lBmpRowPitch = width * 4;
 	auto sptr = static_cast<BYTE*>(resource.pData);
@@ -231,7 +226,6 @@ BYTE* grab(BYTE* buffer, int left, int top, int right, int bottom)
 void destroy()
 {
 	if (dxgi) {
-		dxgi->~SimpleDXGI();
 		delete dxgi;
 		dxgi = nullptr;
 	}
