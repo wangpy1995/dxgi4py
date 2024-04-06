@@ -103,7 +103,6 @@ void SimpleDXGI::InitSession()
 				virtual HRESULT __stdcall GetInterface(GUID const& id, void** object) = 0;
 			};
 			auto access = frame.Surface().as<IDirect3DDxgiInterfaceAccess>();
-			texture = nullptr;
 			access->GetInterface(winrt::guid_of<ID3D11Texture2D>(), texture.put_void());
 			isFrameArrived = true;
 			return;
@@ -126,15 +125,11 @@ void SimpleDXGI::CloseSession()
 BYTE* SimpleDXGI::CaptureWindow(BYTE* buffer, int left, int top, int right, int bottom)
 {
 	// Message pump
-	MSG msg;
-	while (!isFrameArrived)
+	while (!isFrameArrived || texture == nullptr)
 	{
-		if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) > 0) {
-			DispatchMessage(&msg);
-		}
 		Sleep(1);
 	}
-	//isFrameArrived = false;
+	isFrameArrived = false;
 	auto pData = grabByRegion(buffer, left, top, right, bottom);
 	return pData;
 }
