@@ -148,14 +148,9 @@ void SimpleDXGI::CloseSession()
 }
 
 BYTE* SimpleDXGI::CaptureWindow(BYTE* buffer, int left, int top, int width, int height)
-{
-	clock_t timer = clock();
-	MSG msg;
+{	
 	while (!isFrameArrived || nullptr == texture)
 	{
-		if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-			DispatchMessage(&msg);
-		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 	isFrameArrived = false;
