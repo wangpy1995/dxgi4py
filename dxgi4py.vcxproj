@@ -136,7 +136,7 @@
       <SubSystem>Windows</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
     </Link>
   </ItemDefinitionGroup>
@@ -154,7 +154,6 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="D:\dxgi4py.dll" />
     <None Include="dxgi_sample.py" />
   </ItemGroup>
   <ItemGroup>

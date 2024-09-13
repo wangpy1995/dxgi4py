@@ -16,18 +16,50 @@
 #pragma comment(lib,"Dwmapi.lib")
 #pragma comment(lib,"windowsapp.lib")
 
+
+
+void avx2_memcpy(BYTE* dst, BYTE* src, size_t size)
+{
+	if (dst != src) {
+#define isAligned(address) ((address&0x1F)==0)
+		if (isAligned((uint64_t)src) && isAligned((uint64_t)dst)) {
+			const __m256i* s = reinterpret_cast<const __m256i*>(src);
+			__m256i* dest = reinterpret_cast<__m256i*>(dst);
+			int64_t vectors = size / sizeof(*s);
+			int64_t residual = size % sizeof(*s);
+			uint64_t vectors_copied = 0;
+			for (; vectors > 0; vectors--, s++, dest++) {
+				const __m256i loaded = _mm256_stream_load_si256(s);
+				_mm256_stream_si256(dest, loaded);
+				vectors_copied++;
+			}
+			if (residual != 0) {
+				uint64_t offset = vectors_copied * sizeof(*s);
+				memcpy(dst + offset, src + offset, size - offset);
+			}
+			_mm_sfence();
+		}
+		else {
+			memcpy(dst, src, size);
+		}
+	}
+}
+
 class SimpleDXGI {
 public:
 	SimpleDXGI(HWND);
 	~SimpleDXGI();
 	BYTE* CaptureWindow(BYTE*, int, int, int, int);
-	BYTE* grabByRegion(BYTE* buffer, int left, int top, int right, int bottom);
+	BYTE* grabByRegion(BYTE* buffer, UINT left, UINT top, UINT width, UINT height);
 private:
 	winrt::Windows::Graphics::Capture::GraphicsCaptureSession session = nullptr;
 	// Create Direct 3D Device
-	winrt::com_ptr<ID3D11Device> d3dDevice;
-	ID3D11DeviceContext* d3dContext = nullptr;
-	winrt::com_ptr<ID3D11Texture2D> texture;
+	winrt::com_ptr<IDXGIFactory2> factory;
+	winrt::com_ptr<IDXGIAdapter> adapter;
+	winrt::com_ptr<ID3D11Device> d3dDevice = nullptr;
+	winrt::com_ptr<ID3D11DeviceContext> d3dContext = nullptr;
+
+	winrt::com_ptr<ID3D11Texture2D> texture = nullptr;
 	bool isFrameArrived = false;
 	HWND hwndTarget;
 	void InitSession();
@@ -49,7 +81,7 @@ SimpleDXGI::~SimpleDXGI()
 void SimpleDXGI::InitSession()
 {
 	// Init COM
-	winrt::init_apartment(winrt::apartment_type::single_threaded);
+	winrt::init_apartment(winrt::apartment_type::multi_threaded);
 	//SetProcessDPIAware();
 
 
@@ -61,16 +93,14 @@ void SimpleDXGI::InitSession()
 	{
 		winrt::com_ptr<::IInspectable> inspectable;
 		winrt::check_hresult(CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice.get(), inspectable.put()));
-		device = inspectable.as<winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice>();
+		inspectable.as(device);
 	}
 
 	auto idxgiDevice2 = dxgiDevice.as<IDXGIDevice2>();
-	winrt::com_ptr<IDXGIAdapter> adapter;
 	winrt::check_hresult(idxgiDevice2->GetParent(winrt::guid_of<IDXGIAdapter>(), adapter.put_void()));
-	winrt::com_ptr<IDXGIFactory2> factory;
 	winrt::check_hresult(adapter->GetParent(winrt::guid_of<IDXGIFactory2>(), factory.put_void()));
 
-	d3dDevice->GetImmediateContext(&d3dContext);
+	d3dDevice->GetImmediateContext(d3dContext.put());
 
 	RECT rect{};
 	DwmGetWindowAttribute(hwndTarget, DWMWA_EXTENDED_FRAME_BOUNDS, &rect, sizeof(RECT));
@@ -85,27 +115,22 @@ void SimpleDXGI::InitSession()
 
 	const auto activationFactory = winrt::get_activation_factory<winrt::Windows::Graphics::Capture::GraphicsCaptureItem>();
 	auto interopFactory = activationFactory.as<IGraphicsCaptureItemInterop>();
-	winrt::Windows::Graphics::Capture::GraphicsCaptureItem captureItem = { nullptr };
+	winrt::Windows::Graphics::Capture::GraphicsCaptureItem captureItem(nullptr);
+	
 	interopFactory->CreateForWindow(hwndTarget,
 		winrt::guid_of<ABI::Windows::Graphics::Capture::IGraphicsCaptureItem>(),
-		reinterpret_cast<void**>(winrt::put_abi(captureItem)));
+		winrt::put_abi(captureItem));
 
 	session = m_framePool.CreateCaptureSession(captureItem);
-	m_framePool.FrameArrived([&](winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool framePool, auto&)
-		{
-			//if (isFrameArrived) return;
-			
-			winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame frame = framePool.TryGetNextFrame();
+	m_framePool.FrameArrived([&](auto& framePool, auto&) {
+		//if (isFrameArrived) return;
+		auto frame = framePool.TryGetNextFrame();
+		auto access = frame.Surface().as<Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
 
-			struct __declspec(uuid("A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1"))
-				IDirect3DDxgiInterfaceAccess : ::IUnknown
-			{
-				virtual HRESULT __stdcall GetInterface(GUID const& id, void** object) = 0;
-			};
-			auto access = frame.Surface().as<IDirect3DDxgiInterfaceAccess>();
-			access->GetInterface(winrt::guid_of<ID3D11Texture2D>(), texture.put_void());
-			isFrameArrived = true;
-			return;
+		//texture = nullptr;
+		access->GetInterface(winrt::guid_of<ID3D11Texture2D>(), texture.put_void());
+		isFrameArrived = true;
+		return;
 		});
 
 
@@ -122,65 +147,62 @@ void SimpleDXGI::CloseSession()
 	}
 }
 
-BYTE* SimpleDXGI::CaptureWindow(BYTE* buffer, int left, int top, int right, int bottom)
+BYTE* SimpleDXGI::CaptureWindow(BYTE* buffer, int left, int top, int width, int height)
 {
-	// Message pump
-	while (!isFrameArrived || texture == nullptr)
+	clock_t timer = clock();
+	MSG msg;
+	while (!isFrameArrived || nullptr == texture)
 	{
-		Sleep(1);
+		if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+			DispatchMessage(&msg);
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 	isFrameArrived = false;
-	auto pData = grabByRegion(buffer, left, top, right, bottom);
+	auto pData = grabByRegion(buffer, left, top, width, height);
 	return pData;
 }
 
-BYTE* SimpleDXGI::grabByRegion(BYTE* buffer, int left, int top, int right, int bottom)
+bool safe_get_texture_desc(winrt::com_ptr<ID3D11Texture2D>* texture, D3D11_TEXTURE2D_DESC* desc) {
+	__try {
+		(*texture)->GetDesc(desc);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {
+		return false;
+	}
+	return true;
+}
+
+BYTE* SimpleDXGI::grabByRegion(BYTE* buffer, UINT left, UINT top, UINT width, UINT height)
 {
 	D3D11_TEXTURE2D_DESC capturedTextureDesc;
-	texture->GetDesc(&capturedTextureDesc);
-	//LONG width = std::min<UINT>(capturedTextureDesc.Width, right - left);
-	//LONG height = std::min<UINT>(capturedTextureDesc.Height, bottom - top);
+	while (!safe_get_texture_desc(&texture, &capturedTextureDesc)) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
 
 	capturedTextureDesc.Usage = D3D11_USAGE_STAGING;
 	capturedTextureDesc.BindFlags = 0;
 	capturedTextureDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 	capturedTextureDesc.MiscFlags = 0;
-	capturedTextureDesc.Width = right - left;
-	capturedTextureDesc.Height = bottom - top;
+	capturedTextureDesc.Width = width;
+	capturedTextureDesc.Height = height;
 
 
 	winrt::com_ptr<ID3D11Texture2D> userTexture = nullptr;
 	winrt::check_hresult(d3dDevice->CreateTexture2D(&capturedTextureDesc, NULL, userTexture.put()));
 
-
-	LONG width = capturedTextureDesc.Width;
-	LONG height = capturedTextureDesc.Height;
-
-
 	D3D11_BOX sourceRegion;
 	sourceRegion.left = left;
 	sourceRegion.top = top;
-	sourceRegion.right = right;
-	sourceRegion.bottom = bottom;
+	sourceRegion.right = left + width;
+	sourceRegion.bottom = top + height;
 	sourceRegion.front = 0;
 	sourceRegion.back = 1;
 	d3dContext->CopySubresourceRegion(userTexture.get(), 0, 0, 0, 0, texture.get(), 0, &sourceRegion);
 
 	D3D11_MAPPED_SUBRESOURCE resource;
 	winrt::check_hresult(d3dContext->Map(userTexture.get(), NULL, D3D11_MAP_READ, 0, &resource));
-
-	//D3D11_QUERY_DESC queryDesc;
-	//queryDesc.Query = D3D11_QUERY_EVENT;
-	//queryDesc.MiscFlags = NULL;
-	//ID3D11Query* pQuery;
-	//winrt::check_hresult(d3dDevice->CreateQuery(&queryDesc, &pQuery));
-	//d3dContext->Flush();
-	//d3dContext->End(pQuery);
-	//BOOL queryData;
-	//while (S_OK != winrt::check_hresult(d3dContext->GetData(pQuery, &queryData, sizeof(BOOL), 0)))
-	//{
-
-	//}
+	d3dContext->Unmap(userTexture.get(), NULL);
 
 	UINT lBmpRowPitch = width * 4;
 	auto sptr = static_cast<BYTE*>(resource.pData);
@@ -190,13 +212,10 @@ BYTE* SimpleDXGI::grabByRegion(BYTE* buffer, int left, int top, int right, int b
 
 	for (size_t h = 0; h < height; ++h)
 	{
-		memcpy_s(dptr, lBmpRowPitch, sptr, lRowPitch);
+		avx2_memcpy(dptr, sptr, lRowPitch);
 		sptr += resource.RowPitch;
-		//sptr -= resource.RowPitch;
-		//dptr -= lBmpRowPitch;
 		dptr += lBmpRowPitch;
 	}
-	d3dContext->Unmap(userTexture.get(), NULL);
 
 	return buffer;
 }
@@ -210,10 +229,10 @@ void init_dxgi(HWND hwnd)
 	dxgi = new SimpleDXGI(hwnd);
 }
 
-BYTE* grab(BYTE* buffer, int left, int top, int right, int bottom)
+BYTE* grab(BYTE* buffer, int left, int top, int width, int height)
 {
 	if (dxgi) {
-		return dxgi->CaptureWindow(buffer, left, top, right, bottom);
+		return dxgi->CaptureWindow(buffer, left, top, width, height);
 	}
 	return  nullptr;
 }
