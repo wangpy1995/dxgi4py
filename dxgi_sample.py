@@ -20,21 +20,22 @@ windll.user32.SetProcessDPIAware()
 dxgi.init_dxgi(hwnd)
 
 # 指定截图区域(这里示例为截取整个窗口)
-left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+left, top, right, bottom = GetWindowRect(hwnd)
 shotLeft, shotTop = 0, 0
 height = bottom - top
 width = right - left
 # 创建numpy array用于接收截图结果
 shot = np.ndarray((height, width, 4), dtype=np.uint8)
 shotPointer = shot.ctypes.data_as(POINTER(c_ubyte))
+startTime = time.time()
 # 截图
-for i in range(0, 15):
+for i in range(0, 60):
     buffer = dxgi.grab(shotPointer, shotLeft, shotTop, width, height)
-    # 获取结果，跳过内存拷贝
-    image = np.ctypeslib.as_array(buffer, shape=(1080, 1920, 4))
-    # 保存图像到文件
-    cv2.imwrite('test_dxgi/sample_pic'+str(i)+'.png', image)
-
+    # 获取结果
+    image = np.ctypeslib.as_array(buffer, shape=(height, width, 4))
+    cv2.imwrite('test_dxgi/sample_pic' + str(i) + '.png', image)
+endTime = time.time()
+print('time cost: ' + str(endTime - startTime))
 # 转为BGR形式
 img = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
 cv2.imshow('sample_pic', img)
