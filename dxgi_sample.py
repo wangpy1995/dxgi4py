@@ -30,8 +30,9 @@ shotPointer = shot.ctypes.data_as(POINTER(c_ubyte))
 # 截图
 for i in range(0, 15):
     buffer = dxgi.grab(shotPointer, shotLeft, shotTop, width, height)
-    # 获取结果
-    image = np.fromiter(buffer, dtype=np.uint8, count=height * width * 4).reshape((height, width, 4))
+    # 获取结果，跳过内存拷贝
+    image = np.ctypeslib.as_array(buffer, shape=(1080, 1920, 4))
+    # 保存图像到文件
     cv2.imwrite('test_dxgi/sample_pic'+str(i)+'.png', image)
 
 # 转为BGR形式
